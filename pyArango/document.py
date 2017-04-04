@@ -1,18 +1,20 @@
-import json, types
+import json
+import types
 
 from .theExceptions import (CreationError, DeletionError, UpdateError)
 
 __all__ = ["Document", "Edge"]
 
-class Document(object) :
+class Document(object):
     """The class that represents a document. Documents are meant to be instanciated by collections"""
 
-    def __init__(self, collection, jsonFieldInit = {}) :
+    def __init__(self, collection, jsonFieldInit={}):
+        """Init Document."""
         self.reset(collection, jsonFieldInit)
         self.typeName = "ArangoDoc"
 
-    def reset(self, collection, jsonFieldInit = {}) :
-        """replaces the current values in the document by those in jsonFieldInit"""
+    def reset(self, collection, jsonFieldInit={}):
+        """Replace current values in the document with those in 'jsonFieldInit' dict."""
         self.collection = collection
         self.connection = self.collection.connection
         self.documentsURL = self.collection.documentsURL
@@ -26,10 +28,13 @@ class Document(object) :
         self.set(jsonFieldInit)
         self.modified = True
 
-    def setPrivates(self, fieldDict) :
-        """will set self._id, self._rev and self._key field. Private fields (starting by '_') are all accessed using the self. interface,
-        other fields are accessed through self[fielName], the same as regular dictionnary in python"""
-        try :
+    def setPrivates(self, fieldDict):
+        """Will set self._id, self._rev and self._key field.
+
+        Private fields (starting by '_') are all accessed using the self. interface,
+        other fields are accessed through self[fielName], the same as regular dict in Python.
+        """
+        try:
             self._id = fieldDict["_id"]
             self.URL = "%s/%s" % (self.documentsURL, self._id)
             del(fieldDict["_id"])
@@ -39,30 +44,35 @@ class Document(object) :
 
             self._key = fieldDict["_key"]
             del(fieldDict["_key"])
-        except KeyError :
+        except KeyError:
             self._id, self._rev, self._key = None, None, None
             self.URL = None
 
-    def set(self, fieldDict = None) :
-        """Sets the document according to values contained in the dictinnary fieldDict. This will also set self._id/_rev/_key"""
+    def set(self, fieldDict=None):
+        """Set the document according to values contained in fieldDict.
 
-        if fieldDict and self._id is None :
+        This will also set self._id/_rev/_key
+        """
+
+        if fieldDict and self._id is None:
             self.setPrivates(fieldDict)
 
         if self.collection._validation['on_set']:
-            for k in list(fieldDict.keys()) :
+            for k in list(fieldDict.keys()):
                 self[k] = fieldDict[k]
-        else :
+        else:
             self._store.update(fieldDict)
 
-    def save(self, waitForSync = False, **docArgs) :
-        """Saves the document to the database by either performing a POST (for a new document) or a PUT (complete document overwrite).
-        If you want to only update the modified fields use the .path() function.
-        Use docArgs to put things such as 'waitForSync = True' (for a full list cf ArangoDB's doc).
-        It will only trigger a saving of the document if it has been modified since the last save. If you want to force the saving you can use forceSave()"""
+    def save(self, waitForSync=False, **docArgs):
+        """Save document to database by performing either POST (for a new document) or PUT (complete document overwrite).
 
-        if self.modified :
-            if self.collection._validation['on_save'] :
+        If you want to only update the modified fields use the .path() function.
+        Use docArgs to put things such as 'waitForSync = True' (for a full list cf ArangoDB's docs).
+        It will only trigger a saving of the document if it has been modified since the last save.
+        If you want to force the saving you can use forceSave()
+        """
+        if self.modified:
+            if self.collection._validation['on_save']:
                 self.validate(patch = False)
 
             params = dict(docArgs)
@@ -70,196 +80,214 @@ class Document(object) :
             payload = {}
             payload.update(self._store)
 
-            if self.URL is None :
-                if self._key is not None :
+            if self.URL is None:
+                if self._key is not None:
                     payload["_key"] = self._key
                 payload = json.dumps(payload)
-                r = self.connection.session.post(self.documentsURL, params = params, data = payload)
+                r = self.connection.session.post(self.documentsURL, params=params, data=payload)
                 update = False
-            else :
+            else:
                 payload = json.dumps(payload)
-                r = self.connection.session.put(self.URL, params = params, data = payload)
+                r = self.connection.session.put(self.URL, params=params, data=payload)
                 update = True
 
             data = r.json()
 
-            if (r.status_code == 201 or r.status_code == 202) and "error" not in data :
-                if update :
+            if (r.status_code == 201 or r.status_code == 202) and "error" not in data:
+                if update:
                     self._rev = data['_rev']
-                else :
+                else:
                     self.setPrivates(data)
-            else :
-                if update :
+            else:
+                if update:
                     raise UpdateError(data['errorMessage'], data)
-                else :
+                else:
                     raise CreationError(data['errorMessage'], data)
 
             self.modified = False
 
         self._patchStore = {}
 
-    def forceSave(self, **docArgs) :
-        "saves even if the document has not been modified since the last save"
+    def forceSave(self, **docArgs):
+        """Save, even if the document has not been modified since the last save."""
         self.modified = True
         self.save(**docArgs)
 
-    def saveCopy(self) :
-        "saves a copy of the object and become that copy. returns a tuple (old _key, new _key)"
+    def saveCopy(self):
+        """Save a copy of the object and become that copy.
+
+        returns a tuple (old _key, new _key)
+        """
         old_key = self._key
         self.reset(self.collection)
         self.save()
         return (old_key, self._key)
 
-    def patch(self, keepNull = True, **docArgs) :
+    def patch(self, keepNull=True, **docArgs):
         """Saves the document by only updating the modified fields.
-        The default behaviour concening the keepNull parameter is the opposite of ArangoDB's default, Null values won't be ignored
-        Use docArgs for things such as waitForSync = True"""
 
-        if self.collection._validation['on_save'] :
+        The default behaviour of the keepNull parameter is opposite of ArangoDB's default, Null values won't be ignored.
+        Use docArgs for things such as waitForSync = True
+        """
+        if self.collection._validation['on_save']:
             self.validate(patch = True)
 
-        if self.URL is None :
+        if self.URL is None:
             raise ValueError("Cannot patch a document that was not previously saved")
 
-        if len(self._patchStore) > 0 :
+        if len(self._patchStore) > 0:
             params = dict(docArgs)
             params.update({'collection': self.collection.name, 'keepNull' : keepNull})
             payload = json.dumps(self._patchStore)
 
             r = self.connection.session.patch(self.URL, params = params, data = payload)
             data = r.json()
-            if (r.status_code == 201 or r.status_code == 202) and "error" not in data :
+            if (r.status_code == 201 or r.status_code == 202) and "error" not in data:
                 self._rev = data['_rev']
-            else :
+            else:
                 raise UpdateError(data['errorMessage'], data)
 
             self.modified = False
 
         self._patchStore = {}
 
-    def delete(self) :
-        "deletes the document from the database"
-        if self.URL is None :
+    def delete(self):
+        """Delete the document from the database."""
+        if self.URL is None:
             raise DeletionError("Can't delete a document that was not saved")
         r = self.connection.session.delete(self.URL)
         data = r.json()
 
-        if (r.status_code != 200 and r.status_code != 202) or 'error' in data :
+        if (r.status_code != 200 and r.status_code != 202) or 'error' in data:
             raise DeletionError(data['errorMessage'], data)
         self.reset(self.collection)
 
         self.modified = True
 
-    def validate(self, patch = False) :
-        "validates either the whole store, or only the patch store( patch = True) of the document according to the collection's settings.If logErrors returns a dictionary of errros per field, else raises exceptions"
-        if patch :
+    def validate(self, patch = False):
+        """Validates either the whole store, or only the patch store( patch = True) of the document.
+
+        Does so according to the collection's settings. If logErrors returns a dictionary of errros
+        per field, else raises exceptions.
+        """
+        if patch:
             return self.collection.validateDct(self._patchStore)
-        else :
+        else:
             return self.collection.validateDct(self._store)
 
-    def getInEdges(self, edges, rawResults = False) :
-        "An alias for getEdges() that returns only the in Edges"
-        return self.getEdges(edges, inEdges = True, outEdges = False, rawResults = rawResults)
+    def getInEdges(self, edges, rawResults=False):
+        """An alias for getEdges() that returns only the in Edges."""
+        return self.getEdges(edges, inEdges=True, outEdges=False, rawResults=rawResults)
 
-    def getOutEdges(self, edges, rawResults = False) :
-        "An alias for getEdges() that returns only the out Edges"
-        return self.getEdges(edges, inEdges = False, outEdges = True, rawResults = rawResults)
+    def getOutEdges(self, edges, rawResults=False):
+        """An alias for getEdges() that returns only the out Edges."""
+        return self.getEdges(edges, inEdges=False, outEdges=True, rawResults=rawResults)
 
-    def getEdges(self, edges, inEdges = True, outEdges = True, rawResults = False) :
-        """returns in, out, or both edges linked to self belonging the collection 'edges'.
-        If rawResults a arango results will be return as fetched, if false, will return a liste of Edge objects"""
-        try :
+    def getEdges(self, edges, inEdges=True, outEdges=True, rawResults=False):
+        """Return in, out, or both edges linked to self belonging the collection 'edges'.
+
+        If rawResults a arango results will be return as fetched, if false, will return a liste of Edge objects.
+        """
+        try:
             return edges.getEdges(self, inEdges, outEdges, rawResults)
-        except AttributeError :
+        except AttributeError:
             raise AttributeError("%s does not seem to be a valid Edges object" % edges)
 
-    def __getitem__(self, k) :
-        """Document fields are accessed in a dictionary like fashion: doc[fieldName]. With the exceptions of private fiels (starting with '_')
-        that are accessed as object fields: doc._key"""
-        if self.collection._validation['allow_foreign_fields'] or self.collection.hasField(k) :
+    def __getitem__(self, k):
+        """Access document fields in dictionary-like fashion: doc[fieldName].
+
+        With the exceptions of private fiels (starting with '_')
+        that are accessed as object fields: doc._key
+        """
+        if self.collection._validation['allow_foreign_fields'] or self.collection.hasField(k):
             return self._store.get(k)
 
-        try :
+        try:
             return self._store[k]
-        except KeyError :
+        except KeyError:
             raise KeyError("Document of collection '%s' has no field '%s', for a permissive behaviour set 'allow_foreign_fields' to True" % (self.collection.name, k))
 
-    def __setitem__(self, k, v) :
-        """Documents work just like dictionaries doc[fieldName] = value. With the exceptions of private fiels (starting with '_')
-        that are accessed as object fields: doc._key"""
+    def __setitem__(self, k, v):
+        """Set document field by key k to value v like a dictionary and use subscripting.
 
-        def _recValidate(k, v) :
-            if type(v) is dict :
-                for kk, vv in v.items() :
+        With the exceptions of private fiels (starting with '_')
+        that are accessed as object fields: doc._key
+        """
+        def _recValidate(k, v):
+            if type(v) is dict:
+                for kk, vv in v.items():
                     newk = "%s.%s" % (k, kk)
                     _recValidate(newk, vv)
-            else :
+            else:
                 self.collection.validateField(k, v)
 
-        if self.collection._validation['on_set'] :
+        if self.collection._validation['on_set']:
             _recValidate(k, v)
 
         self._store[k] = v
-        if self.URL is not None :
+        if self.URL is not None:
             self._patchStore[k] = self._store[k]
 
         self.modified = True
 
-    def __delitem__(self, k) :
+    def __delitem__(self, k):
+        """Delete attribute k."""
         del(self._store[k])
 
-    def __str__(self) :
+    def __str__(self):
+        """Return string representation."""
         return "%s '%s': %s" % (self.typeName, self._id, repr(self._store))
 
-    def __repr__(self) :
+    def __repr__(self):
+        """Return string representation."""
         return "%s '%s': %s" % (self.typeName, self._id, repr(self._store))
 
-class Edge(Document) :
+class Edge(Document):
     """An Edge document"""
-    def __init__(self, edgeCollection, jsonFieldInit = {}) :
+
+    def __init__(self, edgeCollection, jsonFieldInit={}):
+        """Init Edge."""
         self.reset(edgeCollection, jsonFieldInit)
 
-    def reset(self, edgeCollection, jsonFieldInit = {}) :
+    def reset(self, edgeCollection, jsonFieldInit={}):
+        """Reset collection."""
         Document.reset(self, edgeCollection, jsonFieldInit)
         self.typeName = "ArangoEdge"
 
-    def links(self, fromVertice, toVertice, **edgeArgs) :
-        """
-        An alias to save that updates the _from and _to attributes.
-        fromVertice and toVertice, can be either strings or documents. It they are unsaved documents, they will be automatically saved.
-        """
+    def links(self, fromVertice, toVertice, **edgeArgs):
+        """An alias to save that updates the _from and _to attributes.
 
-        if fromVertice.__class__ is Document :
-            if not fromVertice._id :
+        fromVertice and toVertice, can be either strings or documents.
+        It they are unsaved documents, they will be automatically saved.
+        """
+        if fromVertice.__class__ is Document:
+            if not fromVertice._id:
                 fromVertice._id.save()
 
             self["_from"] = fromVertice._id
-        elif (type(fromVertice) is bytes) or (type(fromVertice) is str) :
+        elif (type(fromVertice) is bytes) or (type(fromVertice) is str):
             self["_from"] = fromVertice
 
-        if toVertice.__class__ is Document :
-            if not toVertice._id :
+        if toVertice.__class__ is Document:
+            if not toVertice._id:
                 toVertice._id.save()
 
             self["_to"] = toVertice._id
-        elif (type(toVertice) is bytes) or (type(toVertice) is str) :
+        elif (type(toVertice) is bytes) or (type(toVertice) is str):
             self["_to"] = toVertice
 
         self.save(**edgeArgs)
 
-    def save(self, **edgeArgs) :
+    def save(self, **edgeArgs):
         """Works like Document's except that you must specify '_from' and '_to' vertices before.
         There's also a links() function especially for first saves."""
-
-        import types
-
-        if "_from" not in self._store or "_to" not in self._store :
+        if "_from" not in self._store or "_to" not in self._store:
             raise AttributeError("You must specify '_from' and '_to' attributes before saving. You can also use the function 'links()'")
 
         Document.save(self, **edgeArgs)
 
-    def __getattr__(self, k) :
-        if k == "_from" or k == "_to" :
+    def __getattr__(self, k):
+        if k == "_from" or k == "_to":
             return self._store[k]
-        else :
+        else:
             return Document.__getattr__(self, k)
